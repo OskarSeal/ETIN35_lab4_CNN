@@ -4,13 +4,18 @@ Benches:
     cnn  sim/tb_cnn.sv: whole design (top.sv) on test images; checks conv stream, pooling, class
     fc   sim/tb_fc.sv:  FC_TOP alone on pooled vectors (from test images and/or random)
 
+Each layer (conv, pool, fc) uses the reference netlist unless listed in --own, in which case
+the own RTL in rtl/ is compiled instead (same module name and ports).
+
 Usage:
     uv run python tools/run_sim.py cnn 1-10,31
+    uv run python tools/run_sim.py cnn 1-10,31 --own conv,pool
     uv run python tools/run_sim.py fc 1-1000 --random 2000
     uv run python tools/run_sim.py cnn 1-1000 --no-build   # reuse the last snapshot
 
 Vivado is taken from $VIVADO_BIN (default D:\\Program\\2026.1\\Vivado\\bin). The RAM IPs must
-exist in vivado/ip/ (vivado/create_dist_mem.tcl). Each bench runs in build/sim/<bench>/.
+exist in vivado/ip/ (vivado/create_dist_mem.tcl). Each bench / layer combination runs in its
+own directory, e.g. build/sim/cnn or build/sim/cnn-own-conv-pool.
 """
 import argparse
 import itertools
@@ -41,30 +46,44 @@ class Bench:
     uses_ram_ip: bool
 
 
-REF_CONV_VHDL = [
-    "IPs/Convolution/Controller_Imp/behav_vhdl/Controller_impl.vhd",
-    "IPs/Convolution/PE_Top/behav_vhdl/PE.VHD",
-    "IPs/Convolution/Accumulator/behav_vhdl/accumulator.vhd",
-    "IPs/Convolution/RELU_Conv_Activation/behav_vhdl/RELU.vhd",
-]
-REF_POOL_VHDL = ["IPs/pooling/behav_vhdl/Pooling.vhd"]
-REF_FC_VHDL = ["IPs/FC/behav_vhdl/FC.vhd"]
-
-BENCHES = {
-    "cnn": Bench(
-        top="tb_cnn",
-        vhdl=REF_CONV_VHDL + REF_POOL_VHDL + REF_FC_VHDL,
-        sv=["IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv", "top/conv_top.sv", "top/network_top.sv",
-            "top/top_initialize.sv", "top/top.sv", "sim/tb_cnn.sv"],
-        uses_ram_ip=True,
-    ),
-    "fc": Bench(
-        top="tb_fc",
-        vhdl=REF_FC_VHDL,
-        sv=["top/top_initialize.sv", "sim/tb_fc.sv"],
-        uses_ram_ip=False,
-    ),
+# Per layer: (VHDL, SV) sources of the reference ("ref") and own ("own") implementation.
+LAYERS = {
+    "conv": {
+        "ref": (["IPs/Convolution/Controller_Imp/behav_vhdl/Controller_impl.vhd",
+                 "IPs/Convolution/PE_Top/behav_vhdl/PE.VHD",
+                 "IPs/Convolution/Accumulator/behav_vhdl/accumulator.vhd",
+                 "IPs/Convolution/RELU_Conv_Activation/behav_vhdl/RELU.vhd"],
+                ["top/conv_top.sv"]),
+        "own": ([], ["rtl/conv_controller.sv", "rtl/conv_pe.sv", "rtl/conv_pe_array.sv",
+                     "rtl/conv_accumulator.sv", "rtl/conv_relu.sv", "rtl/conv_top.sv"]),
+    },
+    "pool": {
+        "ref": (["IPs/pooling/behav_vhdl/Pooling.vhd"], []),
+        "own": ([], ["rtl/pooling_top.sv"]),
+    },
+    "fc": {
+        "ref": (["IPs/FC/behav_vhdl/FC.vhd"], []),
+        "own": ([], ["rtl/fc_top.sv"]),
+    },
 }
+
+# Per bench: testbench top, layers it contains, other SV sources, whether it needs the RAM IPs.
+BENCHES = {
+    "cnn": ("tb_cnn", ["conv", "pool", "fc"],
+            ["IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv", "top/network_top.sv",
+             "top/top_initialize.sv", "top/top.sv", "sim/tb_cnn.sv"], True),
+    "fc": ("tb_fc", ["fc"], ["top/top_initialize.sv", "sim/tb_fc.sv"], False),
+}
+
+
+def make_bench(name: str, own: set[str]) -> Bench:
+    top, layers, common_sv, uses_ram_ip = BENCHES[name]
+    vhdl, sv = [], []
+    for layer in layers:
+        layer_vhdl, layer_sv = LAYERS[layer]["own" if layer in own else "ref"]
+        vhdl += layer_vhdl
+        sv += layer_sv
+    return Bench(top, vhdl, sv + common_sv, uses_ram_ip)
 
 
 # ----------------------------------------------------------------------------------------
@@ -250,12 +269,17 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("bench", choices=BENCHES)
     ap.add_argument("images", help="test image numbers, e.g. 1-10,31")
+    ap.add_argument("--own", default="", help="layers to take from rtl/, e.g. conv,pool")
     ap.add_argument("--random", type=int, default=0, help="fc bench: extra random pooled vectors")
     ap.add_argument("--no-build", action="store_true", help="reuse the existing snapshot")
     args = ap.parse_args()
 
-    bench = BENCHES[args.bench]
-    run_dir = ROOT / "build" / "sim" / args.bench
+    own = {layer for layer in args.own.split(",") if layer}
+    if own - set(LAYERS):
+        sys.exit(f"unknown layer(s) in --own: {', '.join(sorted(own - set(LAYERS)))}")
+    bench = make_bench(args.bench, own)
+    used = [layer for layer in BENCHES[args.bench][1] if layer in own]
+    run_dir = ROOT / "build" / "sim" / "-".join([args.bench] + (["own", *used] if used else []))
     vec_dir, out_dir = run_dir / "vectors", run_dir / "out"
     run_dir.mkdir(parents=True, exist_ok=True)
     ids = g.parse_ids(args.images)

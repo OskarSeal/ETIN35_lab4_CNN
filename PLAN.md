@@ -35,12 +35,21 @@ D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog `
     -source vivado/create_dist_mem.tcl -tclargs build/coe/img_00001
 
 uv run python tools/run_sim.py cnn 1-10,31             # whole design: conv stream, pooling, class
+uv run python tools/run_sim.py cnn 1-1000 --own conv,pool   # same, with own RTL for those layers
 uv run python tools/run_sim.py fc 1-1000 --random 2000 # FC_TOP alone on pooled vectors
+
+# Out-of-context synthesis + place & route of own blocks at 100 MHz (≈ 5 min per block)
+D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog `
+    -source vivado/synth_check.tcl -tclargs conv_top Pooling_TOP
 ```
+
+`--own` takes any of `conv`, `pool`, `fc`: those layers come from `rtl/` (same module names and
+ports as the reference), the rest from the reference netlists. Each combination gets its own
+run directory, e.g. `build/sim/cnn-own-conv-pool`.
 
 | Bench | Speed | Notes |
 |---|---|---|
-| `cnn` | ≈ 6 s per image (gate-level reference) | Compile + elaborate ≈ 1 min; add `--no-build` to reuse the snapshot |
+| `cnn` | ≈ 6 s per image with the gate-level reference conv; much faster with `--own conv` | Compile + elaborate ≈ 1 min; add `--no-build` to reuse the snapshot |
 | `fc` | ≈ 0.13 s per vector | |
 
 The testbenches are self-checking (`sim/tb_cnn.sv`, `sim/tb_fc.sv`). The runner compares the dumps
@@ -55,9 +64,10 @@ overflow variants and names the one the hardware computes.
 | `IPs/` | Reference blocks as Vivado 2016.1 gate-level VHDL netlists (black boxes) + RAM wrapper `RAM_IP_TOP.sv` |
 | `matlab_model/` | Original MATLAB model (not bit-exact, see below) |
 | `Images/` | 1000 test PNGs, labels `Tst_trg.csv` (1 = square), `ifmap_stimuli_TEST.txt` (all images, 1 bit/line, row-major) |
+| `rtl/` | Own RTL: conv layer (`conv_top`, `conv_controller`, `conv_pe_array`, `conv_pe`, `conv_accumulator`, `conv_relu`) and `Pooling_TOP` |
 | `tools/` | Python: `cnn_golden.py` (golden model), `make_vectors.py` (.coe + TB vectors), `run_sim.py` (xsim runner) |
 | `sim/` | Testbenches `tb_cnn.sv` (whole design) and `tb_fc.sv` (FC_TOP alone) |
-| `vivado/` | `create_dist_mem.tcl` generates the four RAM IPs into `vivado/ip/` (generated, not checked in) |
+| `vivado/` | `create_dist_mem.tcl` generates the four RAM IPs into `vivado/ip/` (generated, not checked in); `synth_check.tcl` synthesizes own blocks |
 | `build/` | Generated vectors and simulation runs (not checked in) |
 
 ## Findings
@@ -124,21 +134,42 @@ overflow variants and names the one the hardware computes.
 - [x] `tools/run_sim.py`: compile → elaborate → run → compare in one command
 - [x] Conventions settled (findings 1–4)
 
-### Phase 3 — Own conv, ReLU and max-pool (Grade 4, part 2)
-- Keep the reference port lists, so blocks can be swapped one at a time.
-  `run_sim.py cnn` must stay bit-exact on the conv stream and pooling.
-- Read the RAM LSB first (column c = bit c), like the reference.
-- **Controller:** 61×61 window walk over the 4 banks (`count_def` rotation).
-  The reference does 1 output per 4 cycles. One per cycle is possible: the 4 banks deliver
-  4 rows in parallel and the window slides by one column.
-- **PE_TOP:** pixels are 0/1, so each multiply is a conditional add of the weight.
-- **Accumulator:** sum at ≥ 5 bits, saturate to 4-bit signed (as the reference does), ReLU.
-- **Pooling:** streaming, 4 running maxima per tile row, drop row/col 61, emit 16 values in
-  row-major order. Note: the pooling sees the conv stream in row-major order.
-- To do: add the own RTL as a third bench (or a switch in `run_sim.py`) that uses the own
-  sources instead of the netlists.
-- **Done when:** own conv layer bit-exact with the golden model on 10+ images
-  (deck: 10 images)
+### Phase 3 — Own conv, ReLU and max-pool (Grade 4, part 2) ✅
+
+The layer modules keep the reference names, ports, instance names and probed signal names
+(`conv_top`, `Pooling_TOP`), so `network_top` / `top` are unchanged and each layer can be
+swapped with `--own`. Inside, the structure follows the deck (controller, RAM, 4 PEs,
+accumulator, ReLU), with its own handshake instead of the reference's `count_PE` / `start_acc`
+protocol. That gives **one conv output per cycle instead of one per four**.
+
+- **`conv_controller`:** walks the 61×61 windows row-major. It addresses the four banks for the
+  *next* window row (`count_def` = row mod 4) while the current one is processed, so there are
+  no bubbles.
+- **`conv_pe_array`:** 16 weight registers (shifted in from `f_in`) and four 64-bit row
+  registers. The rows are loaded once per window row, then shifted one column per cycle; the
+  window is bits [3:0].
+- **`conv_pe`:** adds the weights whose pixel is 1. Pixels are 0/1, so no multipliers are
+  needed. Registered 8-bit partial sum.
+- **`conv_accumulator`:** sum of the 4 partial sums (+ bias 0), saturated to 4-bit signed,
+  registered. **`conv_relu`:** combinational.
+- **`Pooling_TOP`:** streaming, with one running maximum per tile column; emits each maximum
+  when its tile completes (row-major), skips row/col 61, and accepts a value every cycle.
+
+Results:
+
+| | Reference | Own |
+|---|---|---|
+| Conv stream vs golden, 1000 images | bit-exact (200 checked) | **bit-exact 1000/1000** |
+| Pooling vs golden, 1000 images | bit-exact (200 checked) | **bit-exact 1000/1000** |
+| First conv output / class ready (cycles after start) | 110 / 14802 | **106 / 3824** (3.9× faster) |
+| conv_top, OOC P&R @ 100 MHz | – | 570 LUT (132 as RAM), 341 FF, WNS +3.57 ns |
+| Pooling_TOP, OOC P&R @ 100 MHz | – | 28 LUT, 35 FF, WNS +5.72 ns |
+
+- With the reference FC still in the loop, the class differs from golden on 33/1000 images.
+  That is exactly the set where the reference FC alone is wrong (finding 3). Accuracy is 95.4%,
+  as for the reference.
+- Own conv + reference pooling + reference FC also works (`--own conv`, 6 images bit-exact):
+  the reference pooling accepts one value per cycle, so the own conv layer is a true drop-in.
 
 ### Phase 4 — FC layers + sigmoid (Grade 5)
 - Same `FC_TOP` ports. Weight registers loaded from the stream (48 + 3), biases hard-coded.
@@ -146,8 +177,9 @@ overflow variants and names the one the hardware computes.
   Widths: FC1 ≥ 11 b, FC2 ≥ 14 b signed.
 - **Sigmoid:** σ(x) > 0.5 ⇔ x > 0, so the hardware sigmoid is the sign bit (class = FC2 > 0).
 - Pipeline registers between MAC stages from the start.
-- Verify with `run_sim.py fc 1-1000 --random 2000` against the **golden** model; the
-  reference FC is lossy (finding 3).
+- Write it as `rtl/fc_top.sv` (module `FC_TOP`), already wired into `run_sim.py --own fc`.
+- Verify with `run_sim.py fc 1-1000 --random 2000 --own fc` against the **golden** model; the
+  reference FC is lossy (finding 3). Then run the full design with `--own conv,pool,fc`.
 - **Done when:** FC bit-exact with golden on all vectors; full design ≈ 96.7% on the images
 
 ### Phase 5 — FPGA
