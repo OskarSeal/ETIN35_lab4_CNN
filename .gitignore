@@ -1,0 +1,22 @@
+# Generated outputs
+build/
+vivado/ip/
+
+# Vivado / xsim
+.Xil/
+*.jou
+*.log
+*.pb
+*.wdb
+*.str
+xsim.dir/
+webtalk*
+vivado*.backup.*
+
+# Python / uv
+.venv/
+__pycache__/
+
+# Office lock files, OS cruft
+.~lock.*#
+.DS_Store
