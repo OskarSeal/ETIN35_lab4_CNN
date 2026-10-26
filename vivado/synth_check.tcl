@@ -5,13 +5,7 @@
 #   vivado -mode batch -nojournal -nolog -source vivado/synth_check.tcl -tclargs conv_top Pooling_TOP
 #   ... -tclargs FC_TOP top      (top = whole design with the own layers)
 
-set root    [file normalize [file join [file dirname [info script]] ..]]
-# Course top level, except top/conv_top.sv: that is the reference conv wrapper, replaced by
-# rtl/conv_top.sv.
-set sources [concat [glob $root/rtl/*.sv] [list \
-    $root/IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv \
-    $root/top/top.sv $root/top/network_top.sv $root/top/top_initialize.sv]]
-set xcis    [glob $root/vivado/ip/dist_mem_gen_*/dist_mem_gen_*.xci]
+source [file join [file dirname [info script]] sources.tcl]
 set summary {}
 
 foreach top $argv {
@@ -19,10 +13,7 @@ foreach top $argv {
     file mkdir $out
 
     create_project -in_memory -part xc7a100tcsg324-1
-    read_ip $xcis
-    # Synthesize the RAM IPs together with the design instead of as separate checkpoints.
-    set_property generate_synth_checkpoint false [get_files *.xci]
-    read_verilog -sv $sources
+    read_design
 
     synth_design -top $top -mode out_of_context
     create_clock -name clk -period 10.000 [get_ports clk]

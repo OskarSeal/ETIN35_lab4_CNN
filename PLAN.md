@@ -41,7 +41,15 @@ uv run python tools/run_sim.py fc 1-1000 --random 2000 --own fc # FC_TOP alone o
 # Out-of-context synthesis + place & route of own blocks at 100 MHz (≈ 5 min per block)
 D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog `
     -source vivado/synth_check.tcl -tclargs conv_top Pooling_TOP FC_TOP top
+
+# Board: simulate fpga_top with the image baked into the RAM IPs, build, program
+uv run python tools/run_sim.py fpga 1                  # 1 = image the RAM IPs were generated with
+D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog -source vivado/build_fpga.tcl
+D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog -source vivado/program_fpga.tcl
 ```
+
+To demo another image: regenerate the `.coe` files and RAM IPs for it (commands above), then
+run `run_sim.py fpga <image>` and rebuild.
 
 `--own` takes any of `conv`, `pool`, `fc`: those layers come from `rtl/` (same module names and
 ports as the reference), the rest from the reference netlists. Each combination gets its own
@@ -64,10 +72,10 @@ overflow variants and names the one the hardware computes.
 | `IPs/` | Reference blocks as Vivado 2016.1 gate-level VHDL netlists (black boxes) + RAM wrapper `RAM_IP_TOP.sv` |
 | `matlab_model/` | Original MATLAB model (not bit-exact, see below) |
 | `Images/` | 1000 test PNGs, labels `Tst_trg.csv` (1 = square), `ifmap_stimuli_TEST.txt` (all images, 1 bit/line, row-major) |
-| `rtl/` | Own RTL: conv layer (`conv_top`, `conv_controller`, `conv_pe_array`, `conv_pe`, `conv_accumulator`, `conv_relu`), `Pooling_TOP` and `FC_TOP` |
+| `rtl/` | Own RTL: conv layer (`conv_top`, `conv_controller`, `conv_pe_array`, `conv_pe`, `conv_accumulator`, `conv_relu`), `Pooling_TOP`, `FC_TOP`; board top `fpga_top` with `debounce` and `reset_sync` |
 | `tools/` | Python: `cnn_golden.py` (golden model), `make_vectors.py` (.coe + TB vectors), `run_sim.py` (xsim runner) |
-| `sim/` | Testbenches `tb_cnn.sv` (whole design) and `tb_fc.sv` (FC_TOP alone) |
-| `vivado/` | `create_dist_mem.tcl` generates the four RAM IPs into `vivado/ip/` (generated, not checked in); `synth_check.tcl` synthesizes own blocks |
+| `sim/` | Testbenches `tb_cnn.sv` (whole design), `tb_fc.sv` (FC_TOP alone), `tb_fpga.sv` (board top) |
+| `vivado/` | `create_dist_mem.tcl` (RAM IPs into `vivado/ip/`, not checked in), `synth_check.tcl` (OOC synthesis), `build_fpga.tcl` + `nexys4.xdc` (bitstream), `program_fpga.tcl`, `sources.tcl` (shared source list) |
 | `build/` | Generated vectors and simulation runs (not checked in) |
 
 ## Findings
@@ -216,12 +224,44 @@ real implementation. Synthesis warnings come only from the course's `top.sv` (un
 `OWN_<LAYER>` for each `--own` layer), so the FC bench checks values, not just the 1-bit
 class.
 
-### Phase 5 — FPGA
-- XDC from the Nexys4 rev B file: clk E3, rst switch, start button
-  (sync + debounce + edge detect), result and valid on LEDs.
-- Regenerate the RAM IPs with the image to demo (LSB-first `.coe` from `make_vectors.py`).
-- Build at 100 MHz; compare utilization, WNS and power with the 2018 numbers; demo on board.
-- Stretch: several images in ROM, selected by switches.
+### Phase 5 — FPGA (bitstream built and simulated; test on the board pending)
+
+`rtl/fpga_top.sv` wraps the unchanged `top`; pins are in `vivado/nexys4.xdc`.
+
+| Board | Signal | Function |
+|---|---|---|
+| SW0 (U9) | `sw_rst` | up = reset. Goes through `reset_sync`: asynchronous assert, synchronous release |
+| BTNC (E16) | `btn_start` | press = classify the image in the RAM. `debounce` (2-flop sync, 10 ms) gives one pulse per press |
+| LED0 (T8) | `led[0]` | result valid |
+| LED1 (V9) | `led[1]` | square |
+| LED2 (R8) | `led[2]` | circle |
+
+- **BTNC is the one pin not confirmed by the course XDC.** It comes from the Digilent Nexys4
+  master XDC. If the button does nothing on the board, check that pin first.
+- The one-pulse-per-press conditioning also fixes finding 8 (`top.sv` re-triggering while
+  start is held).
+- **`run_sim.py fpga <image>`** simulates `fpga_top` with the image *baked into the RAM IPs*
+  (no testbench loading), a bouncing button held over two run lengths, a second press and
+  glitch-only input. It checks one run per press and the class on the LEDs. Passes for image 1
+  (square).
+- **Build:** `build_fpga.tcl` → `build/fpga/cnn.bit` plus utilization / timing / power / DRC
+  reports (≈ 6 min). Results, against the 2018 report:
+
+  | | 2018 report | Own design on the board |
+  |---|---|---|
+  | LUT (of which as memory) | 1677 (256) | **937 (132)** |
+  | FF | 777 | 788 |
+  | IO / BRAM / DSP | 5 / – / – | 6 / 0 / 0 |
+  | WNS / WHS / WPWS @ 100 MHz | +1.193 / +0.110 / +3.750 ns | **+3.550** / +0.105 / +3.750 ns |
+  | Total on-chip power | 0.11 W | **0.114 W** (dynamic 0.017, static 0.097), spec < 1 W |
+  | Accuracy (1000 test images) | – | 96.7% |
+  | Start → class | – | 3771 cycles ≈ 38 µs |
+  | DRC | – | clean |
+
+  The static power of the device dominates; the design itself draws about 17 mW.
+- To do on the board: program (`program_fpga.tcl`), press BTNC, check LED1 (image 1 = square).
+- Stretch: several images in a ROM, selected by switches. This needs a load path into the RAM
+  write ports, i.e. new ports on `top` / `network_top` / `conv_top`.
 
 ### Phase 6 — Report
 - Follow the 2018 report's structure.

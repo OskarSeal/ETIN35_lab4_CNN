@@ -74,6 +74,11 @@ BENCHES = {
             ["IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv", "top/network_top.sv",
              "top/top_initialize.sv", "top/top.sv", "sim/tb_cnn.sv"], True),
     "fc": ("tb_fc", ["fc"], ["top/top_initialize.sv", "sim/tb_fc.sv"], False),
+    # Board top level, always with the own layers; the image is the one baked into the RAM IPs
+    "fpga": ("tb_fpga", ["conv", "pool", "fc"],
+             ["IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv", "top/network_top.sv",
+              "top/top_initialize.sv", "top/top.sv", "rtl/reset_sync.sv", "rtl/debounce.sv",
+              "rtl/fpga_top.sv", "sim/tb_fpga.sv"], True),
 }
 
 
@@ -123,6 +128,20 @@ def build(bench: Bench, run_dir: Path) -> None:
     xtool(run_dir, "xvlog", "--sv", *defines, *src(bench.sv))
     print("elaborating ...")
     xtool(run_dir, "xelab", *libs, "--timescale", "1ns/1ps", "-s", bench.top, f"work.{bench.top}")
+
+
+def baked_image() -> int | None:
+    """Number of the test image held by the RAM IP init files (vivado/ip/*/*.mif), if any."""
+    rows = np.zeros((64, 64), dtype=np.int64)
+    for k in range(4):
+        mif = IP_DIR / f"dist_mem_gen_{k}" / f"dist_mem_gen_{k}.mif"
+        words = [w.strip() for w in mif.read_text().splitlines() if w.strip()]
+        for a, word in enumerate(words):
+            rows[4 * a + k] = [int(c) for c in word[::-1]]      # column c in bit c
+    for i in range(1, g.NUM_IMAGES + 1):
+        if np.array_equal(g.load_image(i), rows):
+            return i
+    return None
 
 
 def run(bench: Bench, run_dir: Path) -> None:
@@ -295,13 +314,21 @@ def main() -> None:
     own = {layer for layer in args.own.split(",") if layer}
     if own - set(LAYERS):
         sys.exit(f"unknown layer(s) in --own: {', '.join(sorted(own - set(LAYERS)))}")
+    if args.bench == "fpga":
+        own = set(LAYERS)
     bench = make_bench(args.bench, own)
     used = [layer for layer in BENCHES[args.bench][1] if layer in own]
-    run_dir = ROOT / "build" / "sim" / "-".join([args.bench] + (["own", *used] if used else []))
+    tag = [] if args.bench == "fpga" or not used else ["own", *used]
+    run_dir = ROOT / "build" / "sim" / "-".join([args.bench, *tag])
     vec_dir, out_dir = run_dir / "vectors", run_dir / "out"
     run_dir.mkdir(parents=True, exist_ok=True)
     ids = g.parse_ids(args.images)
-    if args.bench == "cnn":
+    if args.bench == "fpga":
+        if len(ids) != 1 or baked_image() != ids[0]:
+            sys.exit(f"the RAM IPs hold image {baked_image()}, not {args.images}: give that image, "
+                     "or regenerate them with vivado/create_dist_mem.tcl")
+        make_vectors.write_tb_vectors(ids, vec_dir)
+    elif args.bench == "cnn":
         make_vectors.write_tb_vectors(ids, vec_dir)
     else:
         tags = write_fc_vectors(ids, args.random, vec_dir)
@@ -311,7 +338,7 @@ def main() -> None:
     run(bench, run_dir)
     if args.bench == "cnn":
         compare_cnn(ids, out_dir)
-    else:
+    elif args.bench == "fc":
         compare_fc(tags, vec_dir, out_dir)
 
 
