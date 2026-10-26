@@ -35,12 +35,12 @@ D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog `
     -source vivado/create_dist_mem.tcl -tclargs build/coe/img_00001
 
 uv run python tools/run_sim.py cnn 1-10,31             # whole design: conv stream, pooling, class
-uv run python tools/run_sim.py cnn 1-1000 --own conv,pool   # same, with own RTL for those layers
-uv run python tools/run_sim.py fc 1-1000 --random 2000 # FC_TOP alone on pooled vectors
+uv run python tools/run_sim.py cnn 1-1000 --own conv,pool,fc  # same, with own RTL for those layers
+uv run python tools/run_sim.py fc 1-1000 --random 2000 --own fc # FC_TOP alone on pooled vectors
 
 # Out-of-context synthesis + place & route of own blocks at 100 MHz (≈ 5 min per block)
 D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog `
-    -source vivado/synth_check.tcl -tclargs conv_top Pooling_TOP
+    -source vivado/synth_check.tcl -tclargs conv_top Pooling_TOP FC_TOP top
 ```
 
 `--own` takes any of `conv`, `pool`, `fc`: those layers come from `rtl/` (same module names and
@@ -64,7 +64,7 @@ overflow variants and names the one the hardware computes.
 | `IPs/` | Reference blocks as Vivado 2016.1 gate-level VHDL netlists (black boxes) + RAM wrapper `RAM_IP_TOP.sv` |
 | `matlab_model/` | Original MATLAB model (not bit-exact, see below) |
 | `Images/` | 1000 test PNGs, labels `Tst_trg.csv` (1 = square), `ifmap_stimuli_TEST.txt` (all images, 1 bit/line, row-major) |
-| `rtl/` | Own RTL: conv layer (`conv_top`, `conv_controller`, `conv_pe_array`, `conv_pe`, `conv_accumulator`, `conv_relu`) and `Pooling_TOP` |
+| `rtl/` | Own RTL: conv layer (`conv_top`, `conv_controller`, `conv_pe_array`, `conv_pe`, `conv_accumulator`, `conv_relu`), `Pooling_TOP` and `FC_TOP` |
 | `tools/` | Python: `cnn_golden.py` (golden model), `make_vectors.py` (.coe + TB vectors), `run_sim.py` (xsim runner) |
 | `sim/` | Testbenches `tb_cnn.sv` (whole design) and `tb_fc.sv` (FC_TOP alone) |
 | `vivado/` | `create_dist_mem.tcl` generates the four RAM IPs into `vivado/ip/` (generated, not checked in); `synth_check.tcl` synthesizes own blocks |
@@ -171,16 +171,50 @@ Results:
 - Own conv + reference pooling + reference FC also works (`--own conv`, 6 images bit-exact):
   the reference pooling accepts one value per cycle, so the own conv layer is a true drop-in.
 
-### Phase 4 — FC layers + sigmoid (Grade 5)
-- Same `FC_TOP` ports. Weight registers loaded from the stream (48 + 3), biases hard-coded.
-- 3 MACs consume each pooled value as it arrives, then +bias, ReLU, FC2, +bias.
-  Widths: FC1 ≥ 11 b, FC2 ≥ 14 b signed.
-- **Sigmoid:** σ(x) > 0.5 ⇔ x > 0, so the hardware sigmoid is the sign bit (class = FC2 > 0).
-- Pipeline registers between MAC stages from the start.
-- Write it as `rtl/fc_top.sv` (module `FC_TOP`), already wired into `run_sim.py --own fc`.
-- Verify with `run_sim.py fc 1-1000 --random 2000 --own fc` against the **golden** model; the
-  reference FC is lossy (finding 3). Then run the full design with `--own conv,pool,fc`.
-- **Done when:** FC bit-exact with golden on all vectors; full design ≈ 96.7% on the images
+### Phase 4 — FC layers + sigmoid (Grade 5) ✅
+
+`rtl/fc_top.sv`, module `FC_TOP` with the reference ports:
+
+- **Weights:** 48 FC1 + 3 FC2 weights shifted in from the `top_initialize` stream. Biases are
+  parameters (−12/+20/+24, +6).
+- **FC1:** three multiply-accumulates take each pooled value as it arrives (row-major), with
+  the accumulators starting at the biases. FC1 is done one cycle after the 16th value; the
+  reference instead buffers all 16 and runs 48 serial products.
+- **Pipeline after FC1:** ReLU → FC2 products → FC2 sum + bias → **sigmoid as a sign check**
+  (σ(x) > 0.5 ⇔ x > 0, so class = FC2 > 0). One stage per cycle; the class comes 6 cycles
+  after the last pooled value.
+- **Widths** cover *any* streamed 4-bit weights and the full 4-bit input range: FC1 12 b,
+  FC2 17 b signed. It cannot overflow, which is exactly where the reference FC loses accuracy.
+
+Results:
+
+| | Reference FC | Own FC |
+|---|---|---|
+| Class vs golden, 3000 vectors (1000 images + 2000 random, dense ones over 0..15) | 2772/3000 | **3000/3000** |
+| FC1-after-ReLU and FC2 values vs golden | – | **exact on 3000/3000** |
+| Accuracy on the 1000 images | 95.4% | **96.7%** |
+| Whole design, all own layers, 1000 images | – | conv, pool and class **1000/1000** bit-exact; class ready **3771** cycles after start (reference 14802) |
+| FC_TOP, OOC P&R @ 100 MHz | – | 342 LUT, 366 FF, 0 DSP, WNS +4.37 ns |
+
+Whole design (`top` with all own layers), out-of-context synthesis + P&R at 100 MHz
+(`synth_check.tcl … top`), against the 2018 report:
+
+| | 2018 report | Own design |
+|---|---|---|
+| LUT (of which as memory) | 1677 (256) | **910 (132)** |
+| FF | 777 | 762 |
+| DSP / BRAM | – | 0 / 0 |
+| WNS @ 100 MHz | +1.193 ns | **+3.476 ns** |
+| Accuracy on the 1000 test images | – | 96.7% |
+| Latency, start → class | – | 3771 cycles ≈ 38 µs (≈ 26 k images/s) |
+
+The OOC numbers have no I/O buffers (the design has 5 I/Os). Power comes in Phase 5 with the
+real implementation. Synthesis warnings come only from the course's `top.sv` (unused
+`counter_q` register and one FSM state bit) and are harmless.
+
+`sim/tb_fc.sv` also dumps the FC internals when compiled with `-d OWN_FC` (`run_sim.py` passes
+`OWN_<LAYER>` for each `--own` layer), so the FC bench checks values, not just the 1-bit
+class.
 
 ### Phase 5 — FPGA
 - XDC from the Nexys4 rev B file: clk E3, rst switch, start button

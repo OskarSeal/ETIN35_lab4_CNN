@@ -3,9 +3,14 @@
 #
 # Usage (from any directory):
 #   vivado -mode batch -nojournal -nolog -source vivado/synth_check.tcl -tclargs conv_top Pooling_TOP
+#   ... -tclargs FC_TOP top      (top = whole design with the own layers)
 
 set root    [file normalize [file join [file dirname [info script]] ..]]
-set sources [concat [glob $root/rtl/*.sv] [list $root/IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv]]
+# Course top level, except top/conv_top.sv: that is the reference conv wrapper, replaced by
+# rtl/conv_top.sv.
+set sources [concat [glob $root/rtl/*.sv] [list \
+    $root/IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv \
+    $root/top/top.sv $root/top/network_top.sv $root/top/top_initialize.sv]]
 set xcis    [glob $root/vivado/ip/dist_mem_gen_*/dist_mem_gen_*.xci]
 set summary {}
 

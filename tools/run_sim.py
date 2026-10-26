@@ -44,6 +44,7 @@ class Bench:
     vhdl: list[str]
     sv: list[str]
     uses_ram_ip: bool
+    defines: list[str]      # Verilog defines, OWN_<LAYER> for each own layer
 
 
 # Per layer: (VHDL, SV) sources of the reference ("ref") and own ("own") implementation.
@@ -83,7 +84,8 @@ def make_bench(name: str, own: set[str]) -> Bench:
         layer_vhdl, layer_sv = LAYERS[layer]["own" if layer in own else "ref"]
         vhdl += layer_vhdl
         sv += layer_sv
-    return Bench(top, vhdl, sv + common_sv, uses_ram_ip)
+    defines = [f"OWN_{layer.upper()}" for layer in layers if layer in own]
+    return Bench(top, vhdl, sv + common_sv, uses_ram_ip, defines)
 
 
 # ----------------------------------------------------------------------------------------
@@ -117,7 +119,8 @@ def build(bench: Bench, run_dir: Path) -> None:
         # The IP simulation model reads its init file from the run directory.
         for k in range(4):
             shutil.copy(IP_DIR / f"dist_mem_gen_{k}" / f"dist_mem_gen_{k}.mif", run_dir)
-    xtool(run_dir, "xvlog", "--sv", *src(bench.sv))
+    defines = [arg for d in bench.defines for arg in ("-d", d)]
+    xtool(run_dir, "xvlog", "--sv", *defines, *src(bench.sv))
     print("elaborating ...")
     xtool(run_dir, "xelab", *libs, "--timescale", "1ns/1ps", "-s", bench.top, f"work.{bench.top}")
 
@@ -226,7 +229,8 @@ def compare_cnn(ids: list[int], out_dir: Path) -> None:
 # ----------------------------------------------------------------------------------------
 def write_fc_vectors(ids: list[int], n_random: int, vec_dir: Path, seed: int = 1) -> list[str]:
     """Pooled 4x4 maps (row-major) from test images plus random ones; returns a source tag per
-    line. Random maps are half dense (all 0..7) and half sparse like real images."""
+    line. Random maps are half dense, over the full 4-bit input range 0..15, and half sparse
+    with values 0..7 like real images."""
     vec_dir.mkdir(parents=True, exist_ok=True)
     rng = np.random.default_rng(seed)
     pools, tags = [], []
@@ -234,9 +238,10 @@ def write_fc_vectors(ids: list[int], n_random: int, vec_dir: Path, seed: int = 1
         pools.append(g.run(g.load_image(i)).pool.flatten())
         tags.append(f"img {i}")
     for n in range(n_random):
-        v = rng.integers(0, 8, 16)
         if n % 2:
-            v *= rng.random(16) < 0.25
+            v = rng.integers(0, 8, 16) * (rng.random(16) < 0.25)
+        else:
+            v = rng.integers(0, 16, 16)
         pools.append(v)
         tags.append("random")
     (vec_dir / "fc_vectors.txt").write_text("".join(" ".join(map(str, p)) + "\n" for p in pools))
@@ -246,20 +251,33 @@ def write_fc_vectors(ids: list[int], n_random: int, vec_dir: Path, seed: int = 1
 def compare_fc(tags: list[str], vec_dir: Path, out_dir: Path) -> None:
     pools = [np.array(list(map(int, l.split()))).reshape(4, 4)
              for l in (vec_dir / "fc_vectors.txt").read_text().splitlines()]
-    hw = {int(l.split()[0]): int(l.split()[1]) for l in (out_dir / "fc_results.txt").read_text().splitlines()}
+    # Each line: index, class[, hid0 hid1 hid2 fc2 when the testbench can see the internals]
+    rows = {}
+    for line in (out_dir / "fc_results.txt").read_text().splitlines():
+        cols = list(map(int, line.split()))
+        rows[cols[0]] = cols[1:]
     labels = g.load_labels()
     bad, n_img, hw_correct, gold_correct = [], 0, 0, 0
+    cls_ok = n_internal = internal_ok = 0
     for n, (p, tag) in enumerate(zip(pools, tags)):
         fc1, fc2, cls = g.fc(p)
-        if hw.get(n) != cls:
+        hw_cls, *internal = rows.get(n, [None])
+        golden_internal = [*np.maximum(fc1, 0).tolist(), fc2]
+        cls_ok += hw_cls == cls
+        if internal:
+            n_internal += 1
+            internal_ok += internal == golden_internal
+        if hw_cls != cls or (internal and internal != golden_internal):
             bad.append(f"  {tag:>9}: pool {p.flatten().tolist()} golden fc1 {fc1.tolist()} fc2 {fc2} "
-                       f"class {cls}, hw {hw.get(n)}")
+                       f"class {cls}, hw class {hw_cls}" + (f" hid+fc2 {internal}" if internal else ""))
         if tag.startswith("img"):
             label = labels[int(tag.split()[1]) - 1]
             n_img += 1
-            hw_correct += hw.get(n) == label
+            hw_correct += hw_cls == label
             gold_correct += cls == label
-    print(f"\nFC class matches golden: {len(pools) - len(bad)}/{len(pools)}")
+    print(f"\nFC class matches golden: {cls_ok}/{len(pools)}")
+    if n_internal:
+        print(f"FC1 (after ReLU) and FC2 values match golden exactly: {internal_ok}/{n_internal}")
     if n_img:
         print(f"accuracy vs labels on {n_img} images: hardware {hw_correct / n_img:.1%}, golden {gold_correct / n_img:.1%}")
     print("\n".join(bad[:15]))

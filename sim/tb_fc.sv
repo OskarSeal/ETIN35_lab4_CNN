@@ -6,7 +6,9 @@
 // vectors/fc_vectors.txt (16 pooled values, row-major tile order) is fed in with the same
 // spacing the pooling layer produces (one value every 60 cycles, a longer gap after each tile
 // row), and the 1-bit result is written to out/fc_results.txt as "<line> <result>"
-// (-1 = timeout). Paths are relative to the simulation run directory.
+// (-1 = timeout). With the own FC (compiled with -d OWN_FC) each line also has the internal
+// values "<hid0> <hid1> <hid2> <fc2>" (FC1 after ReLU, FC2 sum) for an exact comparison.
+// Paths are relative to the simulation run directory.
 module tb_fc;
 
     localparam int CLK_PERIOD     = 10;     // ns, 100 MHz
@@ -49,13 +51,19 @@ module tb_fc;
 
     always #(CLK_PERIOD/2) clk = ~clk;
 
-    bit   done;
-    logic result;
+    bit    done;
+    logic  result;
+    string internals;
 
     always @(posedge clk)
         if (!rst && fc_valid && !done) begin
             result = fc_out;
             done   = 1'b1;
+`ifdef OWN_FC
+            internals = $sformatf(" %0d %0d %0d %0d", dut.hid[0], dut.hid[1], dut.hid[2], dut.fc2);
+`else
+            internals = "";
+`endif
         end
 
     initial begin
@@ -94,7 +102,7 @@ module tb_fc;
                 repeat (TIMEOUT_CYCLES) @(posedge clk);
             join_any
             disable fork;
-            $fdisplay(f_out, "%0d %0d", n, done ? int'(result) : -1);
+            $fdisplay(f_out, "%0d %0d%s", n, done ? int'(result) : -1, done ? internals : "");
             n++;
         end
 
