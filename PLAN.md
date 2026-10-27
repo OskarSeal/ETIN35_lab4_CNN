@@ -81,7 +81,7 @@ recreate them. What `create_projects.tcl` adds (all referenced from the reposito
 | | `CNN_grade4` | `CNN_grade5` |
 |---|---|---|
 | Both | `top/top.sv`, `top/network_top.sv`, `top/top_initialize.sv`, `IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv`, the RAM IPs `vivado/ip/dist_mem_gen_0..3.xci`, `rtl/conv_*.sv` (6 files), `rtl/pooling_top.sv`, board top `rtl/fpga_top.sv` + `image_loader.sv` + `debounce.sv` + `reset_sync.sv`, image ROM file `vivado/board/board_images.mem` + labels `vivado/board/board_labels.sv` | same |
-| FC layer | `IPs/FC/behav_vhdl/FC.vhd` (reference netlist) | `rtl/fc_top.sv` |
+| FC layer | `build/netlists/FC.vhd` (synthesizable copy of the reference netlist `IPs/FC/behav_vhdl/FC.vhd`, see below) | `rtl/fc_top.sv` |
 | Constraints | `vivado/nexys4.xdc` | same |
 | Simulation | `sim/tb_cnn.sv` (top `tb_cnn`, runtime `all`, `-testplusarg VEC_DIR=… OUT_DIR=…`) | same |
 
@@ -90,6 +90,15 @@ recreate them. What `create_projects.tcl` adds (all referenced from the reposito
 | `CNN_reference` (`reference`, grade 4 part 1) | all course netlists | 14802 cycles |
 | `CNN_grade4` (grade 4 part 2) | own conv + ReLU + pool, reference FC | 3824 cycles |
 | `CNN_grade5` | all own | 3771 cycles |
+
+The reference netlists are `write_vhdl` simulation netlists of each block synthesized as a top
+level: `NotValidForBitStream` on the top entity (Vivado synthesis stops with Synth 8-5832,
+"source file was generated for simulation") and an IBUF / OBUF / BUFG on every port.
+`setup_project.tcl` therefore adds copies made by `vivado/synth_netlist.tcl` (attribute removed,
+buffers replaced by assignments, logic unchanged) to `build/netlists/`, regenerated on every
+`source`. They are used for both simulation and synthesis, so the grade 4 projects also
+synthesize. In a project made before this, re-source the script with the same layers, e.g.
+`set own {conv pool}; source <repository>/vivado/setup_project.tcl` in `CNN_grade4`.
 
 With the reference FC, `tb_cnn` reports FAIL on the images where that FC is lossy (finding 3,
 e.g. images 31 and 141); images 1–10 pass in all three.

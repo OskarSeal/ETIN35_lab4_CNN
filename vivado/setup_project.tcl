@@ -12,9 +12,12 @@
 #
 # Layers come from rtl/ unless left out of $own, in which case the reference netlist is used,
 # e.g.  set own {conv}; source .../setup_project.tcl
+# The reference netlists are simulation netlists that Vivado refuses to synthesize; the project
+# gets synthesizable copies of them in build/netlists/ instead (vivado/synth_netlist.tcl).
 # Sourcing again swaps the HDL files and keeps the RAM IPs.
 
 source [file join [file dirname [info script]] sources.tcl]
+source [file join [file dirname [info script]] synth_netlist.tcl]
 if {![info exists own]} { set own {conv pool fc} }
 
 # Per layer: own RTL / reference (gate-level VHDL netlists, conv with its SV wrapper)
@@ -41,9 +44,19 @@ set files {}
 # board_labels.mem was the label ROM file before board_labels.sv; removed from older projects.
 set known [list $root/sim/tb_cnn.sv $root/vivado/nexys4.xdc $root/vivado/board/board_labels.mem]
 foreach f $common { lappend files $root/$f; lappend known $root/$f }
+set netlists $root/build/netlists
 dict for {layer impl} $layers {
-    foreach f [dict get $impl [expr {$layer in $own ? "own" : "ref"}]] { lappend files $root/$f }
-    foreach f [concat [dict get $impl own] [dict get $impl ref]] { lappend known $root/$f }
+    foreach f [dict get $impl [expr {$layer in $own ? "own" : "ref"}]] {
+        if {[string match -nocase *.vhd $f]} {
+            lappend files [synth_netlist $root/$f $netlists]
+        } else {
+            lappend files $root/$f
+        }
+    }
+    foreach f [concat [dict get $impl own] [dict get $impl ref]] {
+        lappend known $root/$f
+        if {[string match -nocase *.vhd $f]} { lappend known $netlists/[file tail $f] }
+    }
 }
 
 # Sourcing again swaps the HDL files, in one remove_files call (removing files one by one,
