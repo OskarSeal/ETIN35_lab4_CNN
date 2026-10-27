@@ -6,15 +6,22 @@ module reset_sync (
     output logic rst_out
 );
 
-    logic [1:0] ff;
+    logic [1:0] ff_q, ff_d;
 
+    // ------------------------------------------------------------------
+    // Sequential process
+    // ------------------------------------------------------------------
     always_ff @(posedge clk or posedge rst_in) begin
         if (rst_in)
-            ff <= 2'b11;
+            ff_q <= 2'b11;
         else
-            ff <= {ff[0], 1'b0};
+            ff_q <= ff_d;
     end
 
-    assign rst_out = ff[1];
+    // ------------------------------------------------------------------
+    // Combinational process
+    // ------------------------------------------------------------------
+    assign ff_d    = {ff_q[0], 1'b0};
+    assign rst_out = ff_q[1];
 
 endmodule

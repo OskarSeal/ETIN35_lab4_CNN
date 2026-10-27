@@ -96,6 +96,10 @@ overflow variants and names the one the hardware computes.
 | `vivado/` | `create_dist_mem.tcl` (RAM IPs into `vivado/ip/`, not checked in), `synth_check.tcl` (OOC synthesis), `build_fpga.tcl` + `nexys4.xdc` (bitstream), `program_fpga.tcl`, `sources.tcl` (shared source list), `create_projects.tcl` + `setup_project.tcl` (GUI projects) |
 | `build/` | Generated vectors and simulation runs (not checked in) |
 
+**RTL style** (`rtl/`, as in the course's `top/`): no `for` loops (procedural or `generate`).
+Each module has one sequential process that holds only the reset and `x_q <= x_d` (or a plain
+delay such as `valid_q <= valid_in`); all logic is in `always_comb` blocks or `assign`.
+
 ## Findings
 
 ### From simulating the reference design (Phase 2)

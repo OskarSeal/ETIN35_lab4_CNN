@@ -10,13 +10,19 @@ module conv_pe (
 
     logic signed [7:0] sum;
 
+    // ------------------------------------------------------------------
+    // Combinational process
+    // ------------------------------------------------------------------
     always_comb begin
-        sum = '0;
-        for (int j = 0; j < 4; j++)
-            if (pixels[j])
-                sum = sum + $signed(weights[4*j +: 4]);
+        sum = (pixels[0] ? $signed(weights[3:0])   : 8'sd0)
+            + (pixels[1] ? $signed(weights[7:4])   : 8'sd0)
+            + (pixels[2] ? $signed(weights[11:8])  : 8'sd0)
+            + (pixels[3] ? $signed(weights[15:12]) : 8'sd0);
     end
 
+    // ------------------------------------------------------------------
+    // Sequential process
+    // ------------------------------------------------------------------
     always_ff @(posedge clk or posedge rst) begin
         if (rst)
             psum <= '0;

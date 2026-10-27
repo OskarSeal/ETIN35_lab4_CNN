@@ -60,7 +60,7 @@ module tb_fc;
             result = fc_out;
             done   = 1'b1;
 `ifdef OWN_FC
-            internals = $sformatf(" %0d %0d %0d %0d", dut.hid[0], dut.hid[1], dut.hid[2], dut.fc2);
+            internals = $sformatf(" %0d %0d %0d %0d", dut.hid_q[0], dut.hid_q[1], dut.hid_q[2], dut.fc2_q);
 `else
             internals = "";
 `endif
