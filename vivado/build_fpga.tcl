@@ -2,11 +2,15 @@
 # vivado/nexys4.xdc, reports (utilization, timing, power, DRC) and build/fpga/cnn.bit.
 #
 # Usage (from any directory):
-#   vivado -mode batch -nojournal -nolog -source vivado/build_fpga.tcl
-# The image in the RAM is the one vivado/create_dist_mem.tcl was last run with.
+#   vivado -mode batch -nojournal -nolog -source vivado/build_fpga.tcl [-tclargs <name>]
+# The image in the RAM is the one vivado/create_dist_mem.tcl was last run with. With <name>
+# (e.g. img_00003) everything goes to build/fpga/<name>/ instead of build/fpga/.
 
+if {[llength $argv] > 1} {
+    error "usage: \[-tclargs <name>\]"
+}
 source [file join [file dirname [info script]] sources.tcl]
-set out [file join $root build fpga]
+set out [file join $root build fpga {*}$argv]
 file mkdir $out
 
 create_project -in_memory -part xc7a100tcsg324-1

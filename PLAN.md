@@ -44,12 +44,13 @@ D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog `
 
 # Board: simulate fpga_top with the image baked into the RAM IPs, build, program
 uv run python tools/run_sim.py fpga 1                  # 1 = image the RAM IPs were generated with
-D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog -source vivado/build_fpga.tcl
-D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog -source vivado/program_fpga.tcl
+D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog -source vivado/build_fpga.tcl -tclargs img_00001
+D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog -source vivado/program_fpga.tcl -tclargs img_00001
 ```
 
 To demo another image: regenerate the `.coe` files and RAM IPs for it (commands above), then
-run `run_sim.py fpga <image>` and rebuild.
+run `run_sim.py fpga <image>` and rebuild with its name. The `-tclargs <name>` of the build and
+program scripts selects `build/fpga/<name>/`; without it they use `build/fpga/`.
 
 Vivado GUI projects, one per grade. Run Behavioral Simulation runs `tb_cnn` on the images
 in the shared vectors; each project writes its dumps to `build/sim/project/<project>/`:
@@ -231,14 +232,16 @@ Whole design (`top` with all own layers), out-of-context synthesis + P&R at 100 
 
 | | 2018 report | Own design |
 |---|---|---|
-| LUT (of which as memory) | 1677 (256) | **910 (132)** |
-| FF | 777 | 762 |
+| LUT (of which as memory) | 1677 (256) | **901 (132)** |
+| FF | 777 | 758 |
 | DSP / BRAM | – | 0 / 0 |
-| WNS @ 100 MHz | +1.193 ns | **+3.476 ns** |
+| WNS @ 100 MHz | +1.193 ns | **+3.679 ns** |
 | Accuracy on the 1000 test images | – | 96.7% |
 | Latency, start → class | – | 3771 cycles ≈ 38 µs (≈ 26 k images/s) |
 
-The OOC numbers have no I/O buffers (the design has 5 I/Os). Power comes in Phase 5 with the
+These whole-design numbers are from after the RTL rewrite (no `for` loops, see RTL style); the
+per-block rows in the Phase 3 / 4 tables are from before it. The OOC numbers have no I/O
+buffers (the design has 5 I/Os). Power comes in Phase 5 with the
 real implementation. Synthesis warnings come only from the course's `top.sv` (unused
 `counter_q` register and one FSM state bit) and are harmless.
 
@@ -266,22 +269,32 @@ class.
   (no testbench loading), a bouncing button held over two run lengths, a second press and
   glitch-only input. It checks one run per press and the class on the LEDs. Passes for image 1
   (square).
-- **Build:** `build_fpga.tcl` → `build/fpga/cnn.bit` plus utilization / timing / power / DRC
-  reports (≈ 6 min). Results, against the 2018 report:
+- **Build:** `build_fpga.tcl -tclargs img_0000N` → `build/fpga/img_0000N/cnn.bit` plus
+  utilization / timing / power / DRC reports (≈ 6 min). Built for image 1 (square) and
+  image 3 (circle); `run_sim.py fpga` passes for both. Results for image 1, against the 2018
+  report:
 
   | | 2018 report | Own design on the board |
   |---|---|---|
-  | LUT (of which as memory) | 1677 (256) | **937 (132)** |
-  | FF | 777 | 788 |
+  | LUT (of which as memory) | 1677 (256) | **913 (132)** |
+  | FF | 777 | 782 |
   | IO / BRAM / DSP | 5 / – / – | 6 / 0 / 0 |
-  | WNS / WHS / WPWS @ 100 MHz | +1.193 / +0.110 / +3.750 ns | **+3.550** / +0.105 / +3.750 ns |
-  | Total on-chip power | 0.11 W | **0.114 W** (dynamic 0.017, static 0.097), spec < 1 W |
+  | WNS / WHS / WPWS @ 100 MHz | +1.193 / +0.110 / +3.750 ns | **+3.559** / +0.134 / +3.750 ns |
+  | Total on-chip power | 0.11 W | **0.112 W** (dynamic 0.015, static 0.097), spec < 1 W |
   | Accuracy (1000 test images) | – | 96.7% |
   | Start → class | – | 3771 cycles ≈ 38 µs |
   | DRC | – | clean |
 
-  The static power of the device dominates; the design itself draws about 17 mW.
-- To do on the board: program (`program_fpga.tcl`), press BTNC, check LED1 (image 1 = square).
+  The static power of the device dominates; the design itself draws about 15 mW.
+- **Each bitstream is specialized to its image.** The board never writes the RAM, so Vivado
+  treats its contents as constant: RAM bit columns that are equal at all 16 addresses become
+  constants and the logic they feed is removed. LUT as memory is exactly the number of
+  varying columns: 132 for image 1, 114 for image 3 (891 LUT, 744 FF). Placement changes with
+  it; for image 3 the worst path is the reset release (recovery check) from `reset_sync` to
+  the FC weight registers, +0.557 ns, while the data paths have +4.041 ns. Both builds meet
+  timing.
+- To do on the board: program each bitstream (`program_fpga.tcl -tclargs img_00001` /
+  `img_00003`), press BTNC: image 1 → LED0 + LED1 (square), image 3 → LED0 + LED2 (circle).
 - Stretch: several images in a ROM, selected by switches. This needs a load path into the RAM
   write ports, i.e. new ports on `top` / `network_top` / `conv_top`.
 
