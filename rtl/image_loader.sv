@@ -4,16 +4,16 @@
 //
 // ROM entry n (0..255) is test image n, except entry 0, which is image 256: the switch value
 // is the image number, with all switches off meaning 256. Each entry is 64 words of 64 bits,
-// image row r at word 64 n + r, column c in bit c (as in the RAM banks). The files come from
+// image row r at word 64 n + r, column c in bit c (as in the RAM banks). The labels are in
+// board_labels (vivado/board/board_labels.sv). Both come from
 //   uv run python tools/make_vectors.py board vivado/board
-// IMAGE_FILE ($readmemh, 16384 words) and LABEL_FILE ($readmemb, 256 labels, 1 = square) are
-// found by name: build_fpga.tcl and the GUI projects add them to the design.
+// IMAGE_FILE ($readmemh, 16384 words) is found by name: build_fpga.tcl and the GUI projects add
+// it to the design.
 //
 // Timing: the ROM is a block RAM with two read registers. A load takes 64 + 3 cycles, then
 // start is high for one cycle; the CNN only reads the RAM about 100 cycles after that.
 module image_loader #(
-    parameter IMAGE_FILE = "board_images.mem",
-    parameter LABEL_FILE = "board_labels.mem"
+    parameter IMAGE_FILE = "board_images.mem"
 ) (
     input  logic        clk,
     input  logic        rst,
@@ -40,18 +40,20 @@ module image_loader #(
     logic [5:0]  row1_q, row1_d, row2_q, row2_d;
     logic        start_q, start_d;
 
-    logic [63:0] rom    [0:16383];
-    logic        labels [0:255];
+    logic [63:0] rom [0:16383];
 
     initial $readmemh(IMAGE_FILE, rom);
-    initial $readmemb(LABEL_FILE, labels);
 
     assign load_we   = we2_q;
     assign load_row  = row2_q;
     assign load_data = data_q;
     assign start     = start_q;
     assign sel_match = sel_sync_q == sel_q;
-    assign label     = labels[sel_q];
+
+    board_labels board_labels_inst (
+        .entry (sel_q),
+        .label (label)
+    );
 
     // ------------------------------------------------------------------
     // Sequential process

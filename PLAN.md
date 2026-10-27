@@ -80,7 +80,7 @@ recreate them. What `create_projects.tcl` adds (all referenced from the reposito
 
 | | `CNN_grade4` | `CNN_grade5` |
 |---|---|---|
-| Both | `top/top.sv`, `top/network_top.sv`, `top/top_initialize.sv`, `IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv`, the RAM IPs `vivado/ip/dist_mem_gen_0..3.xci`, `rtl/conv_*.sv` (6 files), `rtl/pooling_top.sv`, board top `rtl/fpga_top.sv` + `image_loader.sv` + `debounce.sv` + `reset_sync.sv`, image ROM files `vivado/board/board_images.mem` + `board_labels.mem` | same |
+| Both | `top/top.sv`, `top/network_top.sv`, `top/top_initialize.sv`, `IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv`, the RAM IPs `vivado/ip/dist_mem_gen_0..3.xci`, `rtl/conv_*.sv` (6 files), `rtl/pooling_top.sv`, board top `rtl/fpga_top.sv` + `image_loader.sv` + `debounce.sv` + `reset_sync.sv`, image ROM file `vivado/board/board_images.mem` + labels `vivado/board/board_labels.sv` | same |
 | FC layer | `IPs/FC/behav_vhdl/FC.vhd` (reference netlist) | `rtl/fc_top.sv` |
 | Constraints | `vivado/nexys4.xdc` | same |
 | Simulation | `sim/tb_cnn.sv` (top `tb_cnn`, runtime `all`, `-testplusarg VEC_DIR=… OUT_DIR=…`) | same |
@@ -118,7 +118,7 @@ overflow variants and names the one the hardware computes.
 | `rtl/` | Own RTL: conv layer (`conv_top`, `conv_controller`, `conv_pe_array`, `conv_pe`, `conv_accumulator`, `conv_relu`), `Pooling_TOP`, `FC_TOP`; board top `fpga_top` with `image_loader` (image ROM), `debounce` and `reset_sync` |
 | `tools/` | Python: `cnn_golden.py` (golden model), `make_vectors.py` (.coe + TB vectors), `run_sim.py` (xsim runner) |
 | `sim/` | Testbenches `tb_cnn.sv` (whole design), `tb_fc.sv` (FC_TOP alone), `tb_fpga.sv` (board top); `vectors/` (images 1–10 for the GUI projects) |
-| `vivado/` | `board/` (image ROM files for the board: images 1–256 and their labels, from `make_vectors.py board`), `create_dist_mem.tcl` (RAM IPs into `vivado/ip/`, not checked in, from `coe/img_0000N/`: images 1 and 3), `synth_check.tcl` (OOC synthesis), `build_fpga.tcl` + `nexys4.xdc` (bitstream), `program_fpga.tcl`, `sources.tcl` (shared source list), `create_projects.tcl` + `setup_project.tcl` (GUI projects) |
+| `vivado/` | `board/` (the board's image ROM file for images 1–256 and the module with their labels, from `make_vectors.py board`), `create_dist_mem.tcl` (RAM IPs into `vivado/ip/`, not checked in, from `coe/img_0000N/`: images 1 and 3), `synth_check.tcl` (OOC synthesis), `build_fpga.tcl` + `nexys4.xdc` (bitstream), `program_fpga.tcl`, `sources.tcl` (shared source list), `create_projects.tcl` + `setup_project.tcl` (GUI projects) |
 | `build/` | Generated vectors and simulation runs (not checked in) |
 
 **RTL style** (`rtl/`, as in the course's `top/`): no `for` loops (procedural or `generate`).
@@ -302,15 +302,20 @@ never show a stale result for a new selection.
   idle (a press comes at most every 10 ms, a run takes 38 µs). `tb_cnn` ties the port off and
   still loads by forcing the RAM ports.
 - **`image_loader`:** 256 × 64 words of 64 bits (1 Mbit) in block RAM, with two read
-  registers, plus the 256 labels. On the press it copies the 64 rows of the selected image
-  (64 + 3 cycles), then gives the start pulse to `top`. Start → class is
+  registers, plus the 256 labels (`board_labels`). On the press it copies the 64 rows of the
+  selected image (64 + 3 cycles), then gives the start pulse to `top`. Start → class is
   3771 + 67 cycles ≈ 38 µs.
-- **ROM files** `vivado/board/board_images.mem` (`$readmemh`, entry n at words 64 n …
-  64 n + 63, entry 0 = image 256) and `board_labels.mem` (`$readmemb`) come from
-  `make_vectors.py board`. `build_fpga.tcl` reads them with `read_mem` and the GUI projects
-  add them as design sources; `image_loader` opens them by name. Checked in Python against
+- **Generated files** (`make_vectors.py board`): `vivado/board/board_images.mem`
+  (`$readmemh`, entry n at words 64 n … 64 n + 63, entry 0 = image 256) and
+  `vivado/board/board_labels.sv` (module `board_labels`, the labels as a 256-bit constant).
+  `build_fpga.tcl` reads the `.mem` with `read_mem` and the GUI projects add both as design
+  sources; `image_loader` opens the `.mem` by name. The images were checked in Python against
   the hardware-verified `.coe` files of images 1 and 3: the RAM after a load holds exactly
   those words.
+- **Labels are not a `$readmem` file:** the first version read them with `$readmemb` into a
+  1-bit-wide memory. Vivado 2024.1 synthesis rejects that ("malformed $readmem task: invalid
+  memory name"), keeps going and leaves the labels at 0, so on the board LED3 lit only for
+  circles. The images (64-bit words) loaded fine: image 1 showed square, image 3 circle.
 - **Demo images:** the golden model (and so the hardware, bit-exact) gets 10 of images 1–256
   wrong (LED3 off): 31, 122, 202, 245 (squares shown as circles) and 59, 69, 75, 78, 154,
   224 (circles shown as squares). Correct examples: 1 (square), 3 (circle).

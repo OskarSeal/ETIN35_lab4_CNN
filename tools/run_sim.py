@@ -82,7 +82,8 @@ BENCHES = {
     "fpga": ("tb_fpga", ["conv", "pool", "fc"],
              ["IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv", "top/network_top.sv",
               "top/top_initialize.sv", "top/top.sv", "rtl/reset_sync.sv", "rtl/debounce.sv",
-              "rtl/image_loader.sv", "rtl/fpga_top.sv", "sim/tb_fpga.sv"], True),
+              "vivado/board/board_labels.sv", "rtl/image_loader.sv", "rtl/fpga_top.sv",
+              "sim/tb_fpga.sv"], True),
 }
 
 
@@ -317,9 +318,8 @@ def main() -> None:
         if not all(1 <= i <= make_vectors.BOARD_IMAGES for i in ids):
             sys.exit(f"the board's image ROM holds images 1-{make_vectors.BOARD_IMAGES} only")
         make_vectors.write_tb_vectors(ids, vec_dir)
-        # image_loader reads the ROM files by name from the run directory
-        for name in ("board_images.mem", "board_labels.mem"):
-            shutil.copy(BOARD_DIR / name, run_dir)
+        # image_loader reads the image ROM file by name from the run directory
+        shutil.copy(BOARD_DIR / "board_images.mem", run_dir)
     elif args.bench == "cnn":
         make_vectors.write_tb_vectors(ids, vec_dir)
     else:

@@ -2,7 +2,7 @@
 
 // Board-level testbench for fpga_top. As on the board, the testbench does not touch the RAM:
 // it sets the image switches and presses the start button, and the image comes from the ROM in
-// image_loader (board_images.mem / board_labels.mem in the run directory). For every image in
+// image_loader (board_images.mem in the run directory). For every image in
 // vectors/expected.txt (images 1..256) it checks that
 //   - one press (bouncing; the first one held for longer than two runs) gives exactly one
 //     load of 64 rows and one run,

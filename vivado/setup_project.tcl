@@ -34,11 +34,12 @@ set layers {
 set common {
     IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv top/network_top.sv top/top_initialize.sv
     top/top.sv rtl/reset_sync.sv rtl/debounce.sv rtl/image_loader.sv rtl/fpga_top.sv
-    vivado/board/board_images.mem vivado/board/board_labels.mem
+    vivado/board/board_images.mem vivado/board/board_labels.sv
 }
 # Plain foreach loops, no lmap: Vivado versions with Tcl 8.5 must run this too.
 set files {}
-set known [list $root/sim/tb_cnn.sv $root/vivado/nexys4.xdc]
+# board_labels.mem was the label ROM file before board_labels.sv; removed from older projects.
+set known [list $root/sim/tb_cnn.sv $root/vivado/nexys4.xdc $root/vivado/board/board_labels.mem]
 foreach f $common { lappend files $root/$f; lappend known $root/$f }
 dict for {layer impl} $layers {
     foreach f [dict get $impl [expr {$layer in $own ? "own" : "ref"}]] { lappend files $root/$f }
