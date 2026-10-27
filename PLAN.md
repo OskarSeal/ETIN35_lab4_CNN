@@ -28,11 +28,12 @@ Conv 4×4 → ReLU (61×61) → MaxPool 15×15 /15 (4×4) → FC1 16→3 → ReL
 ```powershell
 uv run python tools/cnn_golden.py accuracy             # golden-model accuracy, 1000 test images
 uv run python tools/cnn_golden.py show 31              # every stage for one image
-uv run python tools/make_vectors.py coe 1 build/coe/img_00001   # 4 bank .coe files for one image
+uv run python tools/make_vectors.py coe 1 vivado/coe/img_00001  # 4 bank .coe files for one image
 
-# RAM IPs (once, or to change the image baked into the FPGA build)
+# RAM IPs (once, or to change the image baked into the FPGA build). The .coe files for
+# images 1 and 3 are checked in; create_projects.tcl runs this with image 1 if needed.
 D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog `
-    -source vivado/create_dist_mem.tcl -tclargs build/coe/img_00001
+    -source vivado/create_dist_mem.tcl -tclargs vivado/coe/img_00001
 
 uv run python tools/run_sim.py cnn 1-10,31             # whole design: conv stream, pooling, class
 uv run python tools/run_sim.py cnn 1-1000 --own conv,pool,fc  # same, with own RTL for those layers
@@ -53,13 +54,33 @@ run `run_sim.py fpga <image>` and rebuild with its name. The `-tclargs <name>` o
 program scripts selects `build/fpga/<name>/`; without it they use `build/fpga/`.
 
 Vivado GUI projects, one per grade. Run Behavioral Simulation runs `tb_cnn` on the images
-in the shared vectors; each project writes its dumps to `build/sim/project/<project>/`:
+in `sim/vectors` (images 1–10, checked in); each project writes its dumps to
+`build/sim/project/<project>/`. Only git and Vivado are needed, so this also works on
+another computer right after cloning:
 
 ```powershell
-D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog `
+git clone https://github.com/OskarSeal/CNN.git
+cd CNN
+<Vivado>\bin\vivado.bat -mode batch -nojournal -nolog `
     -source vivado/create_projects.tcl -tclargs D:/Program/Vivado grade4 grade5
-uv run python tools/make_vectors.py tb 1-10 build/sim/project/vectors   # images for the projects
+uv run python tools/make_vectors.py tb 1-10 sim/vectors   # only to simulate other images
 ```
+
+On the lab computer (Vivado 2024.1) the repository goes to `C:\Users\os0283sa-s\Program\CNN`
+and the projects to their own folder next to it, which the script creates:
+`-tclargs C:/Users/os0283sa-s/Program/CNN_projects grade4 grade5`. The flow is
+tested with Vivado 2026.1 only; the Tcl scripts avoid Tcl 8.6-only commands such as `lmap` so
+that older Vivado versions can run them.
+
+The projects store the repository's absolute path, so after moving the repository, delete and
+recreate them. What `create_projects.tcl` adds (all referenced from the repository, none copied):
+
+| | `CNN_grade4` | `CNN_grade5` |
+|---|---|---|
+| Both | `top/top.sv`, `top/network_top.sv`, `top/top_initialize.sv`, `IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv`, the RAM IPs `vivado/ip/dist_mem_gen_0..3.xci`, `rtl/conv_*.sv` (6 files), `rtl/pooling_top.sv`, board top `rtl/fpga_top.sv` + `debounce.sv` + `reset_sync.sv` | same |
+| FC layer | `IPs/FC/behav_vhdl/FC.vhd` (reference netlist) | `rtl/fc_top.sv` |
+| Constraints | `vivado/nexys4.xdc` | same |
+| Simulation | `sim/tb_cnn.sv` (top `tb_cnn`, runtime `all`, `-testplusarg VEC_DIR=… OUT_DIR=…`) | same |
 
 | Project | Layers | Class ready |
 |---|---|---|
@@ -93,8 +114,8 @@ overflow variants and names the one the hardware computes.
 | `Images/` | 1000 test PNGs, labels `Tst_trg.csv` (1 = square), `ifmap_stimuli_TEST.txt` (all images, 1 bit/line, row-major) |
 | `rtl/` | Own RTL: conv layer (`conv_top`, `conv_controller`, `conv_pe_array`, `conv_pe`, `conv_accumulator`, `conv_relu`), `Pooling_TOP`, `FC_TOP`; board top `fpga_top` with `debounce` and `reset_sync` |
 | `tools/` | Python: `cnn_golden.py` (golden model), `make_vectors.py` (.coe + TB vectors), `run_sim.py` (xsim runner) |
-| `sim/` | Testbenches `tb_cnn.sv` (whole design), `tb_fc.sv` (FC_TOP alone), `tb_fpga.sv` (board top) |
-| `vivado/` | `create_dist_mem.tcl` (RAM IPs into `vivado/ip/`, not checked in), `synth_check.tcl` (OOC synthesis), `build_fpga.tcl` + `nexys4.xdc` (bitstream), `program_fpga.tcl`, `sources.tcl` (shared source list), `create_projects.tcl` + `setup_project.tcl` (GUI projects) |
+| `sim/` | Testbenches `tb_cnn.sv` (whole design), `tb_fc.sv` (FC_TOP alone), `tb_fpga.sv` (board top); `vectors/` (images 1–10 for the GUI projects) |
+| `vivado/` | `create_dist_mem.tcl` (RAM IPs into `vivado/ip/`, not checked in, from `coe/img_0000N/`: images 1 and 3), `synth_check.tcl` (OOC synthesis), `build_fpga.tcl` + `nexys4.xdc` (bitstream), `program_fpga.tcl`, `sources.tcl` (shared source list), `create_projects.tcl` + `setup_project.tcl` (GUI projects) |
 | `build/` | Generated vectors and simulation runs (not checked in) |
 
 **RTL style** (`rtl/`, as in the course's `top/`): no `for` loops (procedural or `generate`).

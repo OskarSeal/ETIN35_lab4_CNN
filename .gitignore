@@ -11,6 +11,7 @@ vivado/ip/
 *.str
 xsim.dir/
 webtalk*
+clockInfo.txt
 vivado*.backup.*
 
 # Python / uv

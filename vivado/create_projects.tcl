@@ -7,7 +7,10 @@
 #   vivado -mode batch -nojournal -nolog -source vivado/create_projects.tcl -tclargs <dir> [config ...]
 # e.g. -tclargs D:/Program/Vivado grade4 grade5 gives D:/Program/Vivado/CNN_grade4/CNN_grade4.xpr
 # and D:/Program/Vivado/CNN_grade5/CNN_grade5.xpr. Without configs, all three are created.
-# A project directory that already exists is an error.
+# <dir> is created if needed; a project directory that already exists is an error.
+#
+# The RAM IPs (vivado/ip/) are not checked in; after a fresh clone they are generated first,
+# with image 1 (vivado/coe/img_00001).
 
 set configs [dict create reference {} grade4 {conv pool} grade5 {conv pool fc}]
 set here    [file dirname [file normalize [info script]]]
@@ -28,10 +31,20 @@ foreach name $names {
     }
 }
 
+file mkdir $dir
+set ip_root [file join [file dirname $here] vivado ip]
+if {[llength [glob -nocomplain $ip_root/dist_mem_gen_*/dist_mem_gen_*.xci]] < 4} {
+    set argv [list [file join [file dirname $here] vivado coe img_00001]]
+    source [file join $here create_dist_mem.tcl]
+    close_project
+}
+
 foreach name $names {
     create_project CNN_$name [file join $dir CNN_$name] -part xc7a100tcsg324-1
     set own [dict get $configs $name]
     source [file join $here setup_project.tcl]
     close_project
 }
-puts "Created: [join [lmap n $names { file join $dir CNN_$n CNN_$n.xpr }] {, }]"
+set created {}
+foreach n $names { lappend created [file join $dir CNN_$n CNN_$n.xpr] }
+puts "Created: [join $created {, }]"
