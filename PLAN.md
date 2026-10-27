@@ -51,6 +51,24 @@ D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog -source vi
 To demo another image: regenerate the `.coe` files and RAM IPs for it (commands above), then
 run `run_sim.py fpga <image>` and rebuild.
 
+Vivado GUI projects, one per grade. Run Behavioral Simulation runs `tb_cnn` on the images
+in the shared vectors; each project writes its dumps to `build/sim/project/<project>/`:
+
+```powershell
+D:\Program\2026.1\Vivado\bin\vivado.bat -mode batch -nojournal -nolog `
+    -source vivado/create_projects.tcl -tclargs D:/Program/Vivado grade4 grade5
+uv run python tools/make_vectors.py tb 1-10 build/sim/project/vectors   # images for the projects
+```
+
+| Project | Layers | Class ready |
+|---|---|---|
+| `CNN_reference` (`reference`, grade 4 part 1) | all course netlists | 14802 cycles |
+| `CNN_grade4` (grade 4 part 2) | own conv + ReLU + pool, reference FC | 3824 cycles |
+| `CNN_grade5` | all own | 3771 cycles |
+
+With the reference FC, `tb_cnn` reports FAIL on the images where that FC is lossy (finding 3,
+e.g. images 31 and 141); images 1–10 pass in all three.
+
 `--own` takes any of `conv`, `pool`, `fc`: those layers come from `rtl/` (same module names and
 ports as the reference), the rest from the reference netlists. Each combination gets its own
 run directory, e.g. `build/sim/cnn-own-conv-pool`.
@@ -75,7 +93,7 @@ overflow variants and names the one the hardware computes.
 | `rtl/` | Own RTL: conv layer (`conv_top`, `conv_controller`, `conv_pe_array`, `conv_pe`, `conv_accumulator`, `conv_relu`), `Pooling_TOP`, `FC_TOP`; board top `fpga_top` with `debounce` and `reset_sync` |
 | `tools/` | Python: `cnn_golden.py` (golden model), `make_vectors.py` (.coe + TB vectors), `run_sim.py` (xsim runner) |
 | `sim/` | Testbenches `tb_cnn.sv` (whole design), `tb_fc.sv` (FC_TOP alone), `tb_fpga.sv` (board top) |
-| `vivado/` | `create_dist_mem.tcl` (RAM IPs into `vivado/ip/`, not checked in), `synth_check.tcl` (OOC synthesis), `build_fpga.tcl` + `nexys4.xdc` (bitstream), `program_fpga.tcl`, `sources.tcl` (shared source list) |
+| `vivado/` | `create_dist_mem.tcl` (RAM IPs into `vivado/ip/`, not checked in), `synth_check.tcl` (OOC synthesis), `build_fpga.tcl` + `nexys4.xdc` (bitstream), `program_fpga.tcl`, `sources.tcl` (shared source list), `create_projects.tcl` + `setup_project.tcl` (GUI projects) |
 | `build/` | Generated vectors and simulation runs (not checked in) |
 
 ## Findings
