@@ -1,7 +1,7 @@
 // Convolution layer (own RTL): 4x4 conv over the 64x64 image in the RAM banks, saturated to
 // 4-bit signed, then ReLU. Streams the 61 x 61 outputs row-major, one per cycle.
 //
-// Same ports as the reference wrapper top/conv_top.sv, so network_top is unchanged. The
+// Same ports as the reference wrapper top/conv_top.sv, so either can sit in network_top. The
 // instance and signal names RAM_inst, ofmap_conv, valid_ofmap_conv and ofmap_relu are also
 // kept: sim/tb_cnn.sv loads images through RAM_inst and monitors those signals.
 module conv_top (
@@ -10,6 +10,9 @@ module conv_top (
     input  logic         start_in,
     input  logic  [3:0]  f_in,
     input  logic         valid_in_f,
+    input  logic         load_we,       // image load port: write load_data into image row
+    input  logic  [5:0]  load_row,      // load_row of the RAM (only while idle)
+    input  logic  [63:0] load_data,
     output logic  [3:0]  ofmap,
     output logic         valid_ofmap
 );
@@ -41,6 +44,9 @@ module conv_top (
         .clk          (clk),
         .rst          (rst),
         .start_in     (start_in),
+        .load_we      (load_we),
+        .load_row     (load_row),
+        .load_data    (load_data),
         .data_1       (data_1),
         .data_2       (data_2),
         .data_3       (data_3),

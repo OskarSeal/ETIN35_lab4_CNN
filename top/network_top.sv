@@ -8,6 +8,9 @@ module network_top (
     input  logic         valid_k_FC1_in,
     input  logic  [3:0]  k_FC2_in,
     input  logic         valid_k_FC2_in,
+    input  logic         load_we,       // image load port into the conv layer's RAM
+    input  logic  [5:0]  load_row,
+    input  logic  [63:0] load_data,
     output logic         out,
     output logic         valid_output
 );
@@ -31,6 +34,9 @@ module network_top (
         .start_in    (start_in),
         .f_in        (f_in),
         .valid_in_f  (valid_in_f),
+        .load_we     (load_we),
+        .load_row    (load_row),
+        .load_data   (load_data),
         .ofmap       (ofmap_RELU),
         .valid_ofmap (valid_ofmap)
     );

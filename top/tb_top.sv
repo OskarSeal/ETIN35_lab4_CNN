@@ -21,6 +21,9 @@ module tb_top;
         .clk             (clk),
         .rst             (rst),
         .start_ext       (start_ext),
+        .load_we         (1'b0),
+        .load_row        ('0),
+        .load_data       ('0),
         .output_ext      (output_ext),
         .valid_output_ext(valid_output_ext)
     );

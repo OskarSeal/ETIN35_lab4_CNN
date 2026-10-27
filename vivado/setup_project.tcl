@@ -1,5 +1,6 @@
-# Set up an existing Vivado project for the GUI: design sources and RAM IPs from this
-# repository (referenced, not copied), vivado/nexys4.xdc, fpga_top as design top, and
+# Set up an existing Vivado project for the GUI: design sources, RAM IPs and the board's image
+# ROM files from this repository (referenced, not copied), vivado/nexys4.xdc, fpga_top as
+# design top, and
 # sim/tb_cnn.sv as simulation top, reading its vectors from sim/vectors and writing its
 # dumps to build/sim/project/<project name>/.
 #
@@ -32,7 +33,8 @@ set layers {
 }
 set common {
     IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv top/network_top.sv top/top_initialize.sv
-    top/top.sv rtl/reset_sync.sv rtl/debounce.sv rtl/fpga_top.sv
+    top/top.sv rtl/reset_sync.sv rtl/debounce.sv rtl/image_loader.sv rtl/fpga_top.sv
+    vivado/board/board_images.mem vivado/board/board_labels.mem
 }
 # Plain foreach loops, no lmap: Vivado versions with Tcl 8.5 must run this too.
 set files {}

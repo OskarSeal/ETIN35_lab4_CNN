@@ -6,11 +6,20 @@
 // count_def = r mod 4, so that RAM_IP_TOP presents them in order on data_out_1..4. The PE
 // array loads those four rows once per window row and then shifts them one column per cycle,
 // so the RAM is always addressed one window row ahead (row_fetch) and there are no bubbles.
+//
+// The RAM write side is the image load port (load_we / load_row / load_data, from the board's
+// image loader): image row r goes to bank r mod 4 at address r / 4. Loads happen only while
+// the controller is idle, so the load address simply takes over the RAM address while
+// load_we is high.
 module conv_controller (
     input  logic        clk,
     input  logic        rst,
     input  logic        start_in,
-    // RAM ports. The image is preloaded, so the write side is tied off.
+    // Image load port
+    input  logic        load_we,
+    input  logic [5:0]  load_row,
+    input  logic [63:0] load_data,
+    // RAM ports
     output logic [63:0] data_1,
     output logic [63:0] data_2,
     output logic [63:0] data_3,
@@ -113,24 +122,26 @@ module conv_controller (
     // ------------------------------------------------------------------
     // RAM addressing: bank b holds row fetch + i where (fetch + i) mod 4 = b,
     // i.e. address fetch / 4, plus one for the banks "behind" fetch mod 4.
+    // While loading, every bank is addressed with load_row / 4 and only bank load_row mod 4
+    // is written.
     // ------------------------------------------------------------------
     assign count_def = fetch_q[1:0];
-    assign address_1 = fetch_q[5:2] + 4'(fetch_q[1:0] > 2'd0);
-    assign address_2 = fetch_q[5:2] + 4'(fetch_q[1:0] > 2'd1);
-    assign address_3 = fetch_q[5:2] + 4'(fetch_q[1:0] > 2'd2);
-    assign address_4 = fetch_q[5:2];
+    assign address_1 = load_we ? load_row[5:2] : fetch_q[5:2] + 4'(fetch_q[1:0] > 2'd0);
+    assign address_2 = load_we ? load_row[5:2] : fetch_q[5:2] + 4'(fetch_q[1:0] > 2'd1);
+    assign address_3 = load_we ? load_row[5:2] : fetch_q[5:2] + 4'(fetch_q[1:0] > 2'd2);
+    assign address_4 = load_we ? load_row[5:2] : fetch_q[5:2];
 
-    assign data_1 = '0;
-    assign data_2 = '0;
-    assign data_3 = '0;
-    assign data_4 = '0;
+    assign data_1 = load_data;
+    assign data_2 = load_data;
+    assign data_3 = load_data;
+    assign data_4 = load_data;
     assign csn_1  = 1'b0;
     assign csn_2  = 1'b0;
     assign csn_3  = 1'b0;
     assign csn_4  = 1'b0;
-    assign wen_1  = 1'b0;
-    assign wen_2  = 1'b0;
-    assign wen_3  = 1'b0;
-    assign wen_4  = 1'b0;
+    assign wen_1  = load_we && load_row[1:0] == 2'd0;
+    assign wen_2  = load_we && load_row[1:0] == 2'd1;
+    assign wen_3  = load_we && load_row[1:0] == 2'd2;
+    assign wen_4  = load_we && load_row[1:0] == 2'd3;
 
 endmodule

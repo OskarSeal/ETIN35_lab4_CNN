@@ -1,8 +1,10 @@
 """Build and run a testbench in xsim, then compare the results with the golden model.
 
 Benches:
-    cnn  sim/tb_cnn.sv: whole design (top.sv) on test images; checks conv stream, pooling, class
-    fc   sim/tb_fc.sv:  FC_TOP alone on pooled vectors (from test images and/or random)
+    cnn   sim/tb_cnn.sv:  whole design (top.sv) on test images; checks conv stream, pooling, class
+    fc    sim/tb_fc.sv:   FC_TOP alone on pooled vectors (from test images and/or random)
+    fpga  sim/tb_fpga.sv: board top (fpga_top), own layers; images 1-256 selected by the
+          switches from the image ROM (vivado/board/), checks the load and the LEDs
 
 Each layer (conv, pool, fc) uses the reference netlist unless listed in --own, in which case
 the own RTL in rtl/ is compiled instead (same module name and ports).
@@ -12,6 +14,7 @@ Usage:
     uv run python tools/run_sim.py cnn 1-10,31 --own conv,pool
     uv run python tools/run_sim.py fc 1-1000 --random 2000
     uv run python tools/run_sim.py cnn 1-1000 --no-build   # reuse the last snapshot
+    uv run python tools/run_sim.py fpga 1,3,31,59,255,256
 
 Vivado is taken from $VIVADO_BIN (default D:\\Program\\2026.1\\Vivado\\bin). The RAM IPs must
 exist in vivado/ip/ (vivado/create_dist_mem.tcl). Each bench / layer combination runs in its
@@ -36,6 +39,7 @@ import make_vectors
 ROOT = g.ROOT
 VIVADO_BIN = Path(os.environ.get("VIVADO_BIN", r"D:\Program\2026.1\Vivado\bin"))
 IP_DIR = ROOT / "vivado" / "ip"
+BOARD_DIR = ROOT / "vivado" / "board"
 
 
 @dataclass(frozen=True)
@@ -74,11 +78,11 @@ BENCHES = {
             ["IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv", "top/network_top.sv",
              "top/top_initialize.sv", "top/top.sv", "sim/tb_cnn.sv"], True),
     "fc": ("tb_fc", ["fc"], ["top/top_initialize.sv", "sim/tb_fc.sv"], False),
-    # Board top level, always with the own layers; the image is the one baked into the RAM IPs
+    # Board top level, always with the own layers; the images come from the image ROM
     "fpga": ("tb_fpga", ["conv", "pool", "fc"],
              ["IPs/Convolution/RAM_IP_src/RAM_IP_TOP.sv", "top/network_top.sv",
               "top/top_initialize.sv", "top/top.sv", "rtl/reset_sync.sv", "rtl/debounce.sv",
-              "rtl/fpga_top.sv", "sim/tb_fpga.sv"], True),
+              "rtl/image_loader.sv", "rtl/fpga_top.sv", "sim/tb_fpga.sv"], True),
 }
 
 
@@ -128,20 +132,6 @@ def build(bench: Bench, run_dir: Path) -> None:
     xtool(run_dir, "xvlog", "--sv", *defines, *src(bench.sv))
     print("elaborating ...")
     xtool(run_dir, "xelab", *libs, "--timescale", "1ns/1ps", "-s", bench.top, f"work.{bench.top}")
-
-
-def baked_image() -> int | None:
-    """Number of the test image held by the RAM IP init files (vivado/ip/*/*.mif), if any."""
-    rows = np.zeros((64, 64), dtype=np.int64)
-    for k in range(4):
-        mif = IP_DIR / f"dist_mem_gen_{k}" / f"dist_mem_gen_{k}.mif"
-        words = [w.strip() for w in mif.read_text().splitlines() if w.strip()]
-        for a, word in enumerate(words):
-            rows[4 * a + k] = [int(c) for c in word[::-1]]      # column c in bit c
-    for i in range(1, g.NUM_IMAGES + 1):
-        if np.array_equal(g.load_image(i), rows):
-            return i
-    return None
 
 
 def run(bench: Bench, run_dir: Path) -> None:
@@ -324,10 +314,12 @@ def main() -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     ids = g.parse_ids(args.images)
     if args.bench == "fpga":
-        if len(ids) != 1 or baked_image() != ids[0]:
-            sys.exit(f"the RAM IPs hold image {baked_image()}, not {args.images}: give that image, "
-                     "or regenerate them with vivado/create_dist_mem.tcl")
+        if not all(1 <= i <= make_vectors.BOARD_IMAGES for i in ids):
+            sys.exit(f"the board's image ROM holds images 1-{make_vectors.BOARD_IMAGES} only")
         make_vectors.write_tb_vectors(ids, vec_dir)
+        # image_loader reads the ROM files by name from the run directory
+        for name in ("board_images.mem", "board_labels.mem"):
+            shutil.copy(BOARD_DIR / name, run_dir)
     elif args.bench == "cnn":
         make_vectors.write_tb_vectors(ids, vec_dir)
     else:

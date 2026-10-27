@@ -10,6 +10,7 @@ classify the image mirrored left-right.
 Usage:
     uv run python tools/make_vectors.py coe 19 build/coe/img_00019
     uv run python tools/make_vectors.py tb 1-10,31 build/vectors
+    uv run python tools/make_vectors.py board vivado/board
 """
 import argparse
 from pathlib import Path
@@ -19,6 +20,7 @@ import numpy as np
 import cnn_golden as g
 
 BANKS = 4
+BOARD_IMAGES = 256      # images in the board's image ROM (rtl/image_loader.sv), 8 switches
 
 
 def row_bits(row: np.ndarray) -> str:
@@ -54,6 +56,28 @@ def write_tb_vectors(ids: list[int], out_dir: Path, cv: g.Convention = g.HW) -> 
     (out_dir / "expected.txt").write_text("\n".join(exp) + "\n")
 
 
+def board_entry(i: int) -> int:
+    """Image ROM entry (= switch value) of test image i: i itself, and 0 for image 256."""
+    return i % BOARD_IMAGES
+
+
+def write_board_roms(out_dir: Path) -> None:
+    """board_images.mem: images 1..256 for rtl/image_loader.sv, 64 hex words per entry (row r
+    of entry n at word 64 n + r, column c in bit c); entry 0 is image 256.
+    board_labels.mem: the label of each entry (1 = square). Plain data, no comments, so that
+    any $readmem parser (Vivado synthesis included) reads them."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    labels = g.load_labels()
+    image_of = {board_entry(i): i for i in range(1, BOARD_IMAGES + 1)}
+    mem, lab = [], []
+    for n in range(BOARD_IMAGES):
+        i = image_of[n]
+        mem.extend(f"{int(row_bits(r), 2):016x}" for r in g.load_image(i))
+        lab.append(str(labels[i - 1]))
+    (out_dir / "board_images.mem").write_text("\n".join(mem) + "\n")
+    (out_dir / "board_labels.mem").write_text("\n".join(lab) + "\n")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -63,11 +87,16 @@ def main() -> None:
     tb = sub.add_parser("tb", help="testbench stimulus + expected results")
     tb.add_argument("images", help="e.g. 1-10,31")
     tb.add_argument("out_dir", type=Path)
+    board = sub.add_parser("board", help="image and label ROM files for the board, images 1-256")
+    board.add_argument("out_dir", type=Path)
     args = ap.parse_args()
 
     if args.cmd == "coe":
         for p in write_bank_coes(g.load_image(args.image), args.out_dir):
             print(p)
+    elif args.cmd == "board":
+        write_board_roms(args.out_dir)
+        print(f"images 1-{BOARD_IMAGES} -> {args.out_dir}")
     else:
         ids = g.parse_ids(args.images)
         write_tb_vectors(ids, args.out_dir)

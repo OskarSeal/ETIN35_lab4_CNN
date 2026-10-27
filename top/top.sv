@@ -1,9 +1,14 @@
 module top (
-    input  logic       clk,
-    input  logic       rst,
-    input  logic       start_ext,
-    output logic       output_ext,
-    output logic       valid_output_ext
+    input  logic        clk,
+    input  logic        rst,
+    input  logic        start_ext,
+    // Image load port into the conv layer's RAM: load_data is written into image row
+    // load_row while load_we is high. Tie load_we low if the RAM is preloaded.
+    input  logic        load_we,
+    input  logic [5:0]  load_row,
+    input  logic [63:0] load_data,
+    output logic        output_ext,
+    output logic        valid_output_ext
 );
 
     // ------------------------------------------------------------------
@@ -55,6 +60,9 @@ module top (
         .valid_k_FC1_in (valid_data_k_FC1),
         .k_FC2_in       (kernel_FC2),
         .valid_k_FC2_in (valid_data_k_FC2),
+        .load_we        (load_we),
+        .load_row       (load_row),
+        .load_data      (load_data),
         .out            (output_sig),
         .valid_output   (valid_output_sig)
     );

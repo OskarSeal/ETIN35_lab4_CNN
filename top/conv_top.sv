@@ -4,6 +4,9 @@ module conv_top (
     input  logic         start_in,
     input  logic  [3:0]  f_in,
     input  logic         valid_in_f,
+    input  logic         load_we,       // image load port: write load_data into image row
+    input  logic  [5:0]  load_row,      // load_row of the RAM (only while idle)
+    input  logic  [63:0] load_data,
     output logic  [3:0]  ofmap,
     output logic         valid_ofmap
 );
@@ -23,6 +26,12 @@ module conv_top (
     logic [1:0]  count_def;
     logic [7:0]  count_PE;
 
+    // RAM ports: the controller's, or the image load port while load_we is high
+    // (row r goes to bank r mod 4, address r / 4)
+    logic [63:0] ram_data_1, ram_data_2, ram_data_3, ram_data_4;
+    logic [3:0]  ram_addr_1, ram_addr_2, ram_addr_3, ram_addr_4;
+    logic        ram_wen_1, ram_wen_2, ram_wen_3, ram_wen_4;
+
     // RELU / accumulator related signals
     logic [3:0]  ofmap_conv, ofmap_relu;
     logic        valid_ofmap_conv;
@@ -33,6 +42,19 @@ module conv_top (
     assign ifmap_3_top      = ifmap_3;
     assign ifmap_4_top      = ifmap_4;
     assign ofmap            = ofmap_relu;
+
+    assign ram_data_1 = load_we ? load_data     : data_1;
+    assign ram_data_2 = load_we ? load_data     : data_2;
+    assign ram_data_3 = load_we ? load_data     : data_3;
+    assign ram_data_4 = load_we ? load_data     : data_4;
+    assign ram_addr_1 = load_we ? load_row[5:2] : addr_1;
+    assign ram_addr_2 = load_we ? load_row[5:2] : addr_2;
+    assign ram_addr_3 = load_we ? load_row[5:2] : addr_3;
+    assign ram_addr_4 = load_we ? load_row[5:2] : addr_4;
+    assign ram_wen_1  = load_we ? load_row[1:0] == 2'd0 : wen_1;
+    assign ram_wen_2  = load_we ? load_row[1:0] == 2'd1 : wen_2;
+    assign ram_wen_3  = load_we ? load_row[1:0] == 2'd2 : wen_3;
+    assign ram_wen_4  = load_we ? load_row[1:0] == 2'd3 : wen_4;
 
     // ------------------------------------------------------------------
     // Component instantiations (named port mapping)
@@ -65,22 +87,22 @@ module conv_top (
 
     RAM_IP_TOP RAM_inst (
         .clk         (clk),
-        .data_1      (data_1),
-        .data_2      (data_2),
-        .data_3      (data_3),
-        .data_4      (data_4),
-        .address_1   (addr_1),
-        .address_2   (addr_2),
-        .address_3   (addr_3),
-        .address_4   (addr_4),
+        .data_1      (ram_data_1),
+        .data_2      (ram_data_2),
+        .data_3      (ram_data_3),
+        .data_4      (ram_data_4),
+        .address_1   (ram_addr_1),
+        .address_2   (ram_addr_2),
+        .address_3   (ram_addr_3),
+        .address_4   (ram_addr_4),
         .csn_1       (csn_1),
         .csn_2       (csn_2),
         .csn_3       (csn_3),
         .csn_4       (csn_4),
-        .wen_1       (wen_1),
-        .wen_2       (wen_2),
-        .wen_3       (wen_3),
-        .wen_4       (wen_4),
+        .wen_1       (ram_wen_1),
+        .wen_2       (ram_wen_2),
+        .wen_3       (ram_wen_3),
+        .wen_4       (ram_wen_4),
         .count_def   (count_def),
         .data_out_1  (ifmap_1),
         .data_out_2  (ifmap_2),
